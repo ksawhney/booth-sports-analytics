@@ -1,0 +1,59 @@
+---
+title: "Who does TJS affect?"
+output: html_notebook
+---
+
+Goal of this notebook is to model who is affected by TJS.
+
+Start with a set of descriptive statistics/histograms on the subset of players who got TJS. Summarize by the following variables at the time of injury:
+- Age
+- Innings thrown (maybe MLB only or all levels depending on data availability)
+
+For these two, need to figure out some sort of way to measure against baseline of players who didn't get TJS
+- Average velocity / % of pitches thrown as fastballs (way to get at flamethrower vs. other styles). Need to control this for age/innings pitched
+Maybe look at cohorts somehow? Split up the datasets by age (so all age-22, age-23, and so on seasons) and create a logistic regression for probability of getting TJS. Could ask Murphy if there's a modeling technique that will let us do this without splitting up the data
+
+- SP vs. RP (need to define)
+
+Model how it affects them -- velocity, control, pitch stats (walks, HRs, Ks, ERA, etc)
+
+Effect of time on performance, whether it declines faster. Whether TJS is more successful today than in the past
+
+```{r}
+hist(Tommy_John_surgery_list$Age, breaks = length(unique(Tommy_John_surgery_list$Age)))
+```
+
+```{r}
+tjs_mlb = filter(Tommy_John_surgery_list, level == "MLB")
+hist(tjs_mlb$Age, breaks = length(unique(tjs_mlb$Age)))
+```
+
+```{r}
+tjs_mlb_2000 = filter(tjs_mlb, tj_dt > "2000-01-01")
+hist(tjs_mlb_2000$Age, breaks = length(unique(tjs_mlb_2000$Age)))
+```
+
+Import pitcher season stats
+
+```{r}
+library(readr)
+pitcher_season_stats <- read_csv("/classes/3322281_spr2021/Pitch FX Class/pitcher_season_stats.csv")
+```
+
+For each pitcher, build a profile of average pitch speed and percentage of pitches that are fastballs in the entire Statcast database, then code a Boolean on whether they got TJS at all or not. Build GLM to see predictivity
+
+```{r}
+statcast_sum = statcast_red %>% group_by(pitcher) %>% summarize(name = first(player_name), n = n(), rel_speed = mean(release_speed, na.rm = T), pct_ff = sum(pitch_type == "FF", na.rm = T)/sum(!is.na(pitch_type)))
+```
+
+```{r}
+statcast_sum = left_join(statcast_sum, select(ungroup(tjs_red), c("mlbamid", "tj_dt")), by = c("pitcher" = "mlbamid"))
+statcast_sum = statcast_sum %>% mutate(tjs_status = if_else(is.na(tj_dt), F, T))
+```
+
+```{r}
+library(MASS)
+mod2 = glm(tjs_status ~ rel_speed, statcast_sum, family = quasibinomial, weights = statcast_sum$n / sum(statcast_sum$n))
+summary(mod2)
+```
+
