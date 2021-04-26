@@ -1,0 +1,72 @@
+---
+title: "Merging Statcast and TJS Data"
+output: html_notebook
+---
+
+The goal of this notebook is to merge the Statcast and Tommy John surgery databases, to provide a clean data set the team can use for analysis of the various questions we'd like to examine. First, we load the raw data from the relevant locations.
+
+```{r}
+library(readr)
+Tommy_John_surgery_list <- read_csv("Tommy John surgery list.csv")
+statcast_2010_2018 <- read_csv("/classes/3322281_spr2021/Statcast Class/statcast_2010-2018.csv")
+```
+
+
+The first step is reducing the two datasets down to the essential parts that we care about for an initial analysis, to make the data more manageable and to easily visualize whether the cleaning is working as intended or not.
+
+```{r}
+library(dplyr)
+```
+
+```{r}
+statcast_red = select(statcast_2010_2018, pitcher, player_name, game_date, pitch_number, pitch_type, pitch_name, release_speed, effective_speed, release_spin_rate)
+tjs_red = select(Tommy_John_surgery_list, mlbamid, player, level, tj_dt)
+library(lubridate)
+tjs_red$tj_dt = mdy(tjs_red$tj_dt)
+```
+
+To handle the issue in the TJS data that players had multiple surgeries, we'll make the simplifying assumption (for now) that their first one is the only one that "counts". Might be an interesting analysis to do later on pitchers who've had it multiple times vs. just once. 
+
+```{r}
+tjs_red = tjs_red %>% group_by(player) %>% filter(tj_dt == min(tj_dt))
+```
+
+Next, we need to join the two datasets on the player ID. We'll left join the TJS list to the Statcast data, since the latter will be much more comprehensive.
+
+```{r}
+statcast_tjs = left_join(statcast_red, tjs_red, by = c("pitcher" = "mlbamid"))
+```
+
+Based on the merged data, we'll create an additional column for each pitch that contains whether the pitcher was pre-TJS, post-TJS, or has never had TJS. We'll code this column as a three-level factor, so we can use it later for analysis. I also saved the dataset as a CSV, as this is the cleaned dataset we'll want to use going forward.
+
+```{r}
+statcast_tjs = statcast_tjs %>% mutate(tjs_status = if_else(game_date < tj_dt, "Pre-TJS", "Post-TJS", "No TJS"))
+statcast_tjs$tjs_status = as.factor(statcast_tjs$tjs_status)
+write_csv(statcast_tjs, "Statcast_TJS_Merged.csv")
+```
+
+Last, let's create a rudimentary model that examines fastball velocity among pre and post-TJS pitchers. We'll start by removing all pitchers who have never had TJS and all non-fastball pitches from the merged dataset, then run a model on it.
+
+```{r}
+statcast_tjs_fastball = statcast_tjs %>% filter(tjs_status != "No TJS") %>% filter(pitch_type == "FF")
+View(statcast_tjs_fastball)
+```
+
+Note that this model is super basic
+
+```{r}
+library(miceadds)
+mod = lm.cluster(data= statcast_tjs_fastball, formula = release_speed ~ tjs_status, cluster = "pitcher")
+summary(mod)
+```
+
+Based on this very basic model, it seems that pitchers lose about 0.6 MPH off their 4-seam fastball after TJS, though this model fails to account for pitcher age and any other variable that might affect pitch speed.
+
+```{r}
+plot(mod$fitted.values, mod$residuals)
+```
+```{r}
+statcast_tjs_curveball = statcast_tjs %>% filter(tjs_status != "No TJS") %>% filter(pitch_type == "CU")
+mod = lm.cluster(data= statcast_tjs_curveball, formula = release_spin_rate ~ tjs_status, cluster = "pitcher")
+summary(mod)
+```
